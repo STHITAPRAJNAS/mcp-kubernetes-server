@@ -1,0 +1,115 @@
+# =============================================================================
+# RBAC for MCP Kubernetes Server
+# =============================================================================
+# ClusterRole with read access to most resources.
+# Write/delete permissions can be scoped to specific namespaces
+# using RoleBindings instead of ClusterRoleBinding if preferred.
+# =============================================================================
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: mcp-kubernetes-server
+  labels:
+    app.kubernetes.io/name: mcp-kubernetes-server
+    app.kubernetes.io/component: mcp-server
+rules:
+  # Read access to core resources
+  - apiGroups: [""]
+    resources:
+      - pods
+      - pods/log
+      - pods/exec
+      - services
+      - endpoints
+      - namespaces
+      - nodes
+      - configmaps
+      - events
+      - persistentvolumes
+      - persistentvolumeclaims
+      - resourcequotas
+      - limitranges
+      - serviceaccounts
+    verbs: ["get", "list", "watch"]
+
+  # Write access to pods/exec for diagnostic commands
+  - apiGroups: [""]
+    resources:
+      - pods/exec
+      - pods/attach
+    verbs: ["create"]
+
+  # Write access for allowed operations
+  - apiGroups: [""]
+    resources:
+      - namespaces
+      - configmaps
+      - services
+    verbs: ["create", "update", "patch", "delete"]
+
+  # NOTE: Secrets - READ ONLY (values are never returned, only metadata)
+  - apiGroups: [""]
+    resources:
+      - secrets
+    verbs: ["get", "list", "watch"]
+
+  # Apps/deployments
+  - apiGroups: ["apps"]
+    resources:
+      - deployments
+      - deployments/scale
+      - replicasets
+      - statefulsets
+      - daemonsets
+    verbs: ["get", "list", "watch", "update", "patch", "delete"]
+
+  # Batch/jobs
+  - apiGroups: ["batch"]
+    resources:
+      - jobs
+      - cronjobs
+    verbs: ["get", "list", "watch"]
+
+  # Networking
+  - apiGroups: ["networking.k8s.io"]
+    resources:
+      - ingresses
+      - networkpolicies
+    verbs: ["get", "list", "watch"]
+
+  # Autoscaling
+  - apiGroups: ["autoscaling"]
+    resources:
+      - horizontalpodautoscalers
+    verbs: ["get", "list", "watch"]
+
+  # Storage
+  - apiGroups: ["storage.k8s.io"]
+    resources:
+      - storageclasses
+      - volumeattachments
+    verbs: ["get", "list", "watch"]
+
+  # Policy
+  - apiGroups: ["policy"]
+    resources:
+      - poddisruptionbudgets
+    verbs: ["get", "list", "watch"]
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: mcp-kubernetes-server
+  labels:
+    app.kubernetes.io/name: mcp-kubernetes-server
+    app.kubernetes.io/component: mcp-server
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: mcp-kubernetes-server
+subjects:
+  - kind: ServiceAccount
+    name: mcp-kubernetes-server
+    namespace: mcp-system

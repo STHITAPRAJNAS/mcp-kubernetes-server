@@ -1,0 +1,24 @@
+{
+  "_comment": "Inline IAM policy for MCP Kubernetes Server - grants EKS describe access",
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": [
+        "eks:DescribeCluster",
+        "eks:ListClusters",
+        "eks:ListNodegroups",
+        "eks:DescribeNodegroup"
+      ],
+      "Resource": "*",
+      "_comment": "Restrict Resource to specific cluster ARNs in production: arn:aws:eks:REGION:ACCOUNT_ID:cluster/CLUSTER_NAME"
+    },
+    {
+      "Effect": "Allow",
+      "Action": [
+        "sts:GetCallerIdentity"
+      ],
+      "Resource": "*"
+    }
+  ]
+}

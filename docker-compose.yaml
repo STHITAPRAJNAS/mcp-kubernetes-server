@@ -1,0 +1,76 @@
+# =============================================================================
+# Docker Compose for local development and testing
+# =============================================================================
+# Usage:
+#   docker-compose up           # Start with default (kubeconfig) auth
+#   docker-compose up --build   # Rebuild the image first
+#
+# The server will be available at http://localhost:8080
+
+version: "3.9"
+
+services:
+  mcp-kubernetes:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: runtime
+    image: mcp-kubernetes-server:local
+    container_name: mcp-kubernetes-server
+
+    # Port mapping for SSE transport
+    ports:
+      - "8080:8080"
+
+    # Environment configuration
+    environment:
+      # Environment mode: auto (detect), local, or aws
+      - MCP_K8S_ENV=${MCP_K8S_ENV:-local}
+      - MCP_K8S_TRANSPORT=sse
+      - MCP_K8S_HOST=0.0.0.0
+      - MCP_K8S_PORT=8080
+      - MCP_K8S_LOG_LEVEL=${MCP_K8S_LOG_LEVEL:-INFO}
+      - MCP_K8S_JSON_LOGS=${MCP_K8S_JSON_LOGS:-false}
+      # Safety settings
+      - MCP_K8S_ALLOW_DESTRUCTIVE=${MCP_K8S_ALLOW_DESTRUCTIVE:-true}
+      - MCP_K8S_REQUIRE_DESTRUCTIVE_CONFIRMATION=true
+      - MCP_K8S_DRY_RUN=${MCP_K8S_DRY_RUN:-false}
+      # AWS settings (used when MCP_K8S_ENV=aws)
+      - AWS_DEFAULT_REGION=${AWS_DEFAULT_REGION:-us-east-1}
+      - AWS_PROFILE=${AWS_PROFILE:-}
+      - MCP_K8S_EKS_CLUSTER_NAME=${MCP_K8S_EKS_CLUSTER_NAME:-}
+      - MCP_K8S_AWS_ROLE_ARN=${MCP_K8S_AWS_ROLE_ARN:-}
+
+    # Mount kubeconfig for local auth
+    volumes:
+      - ${KUBECONFIG:-${HOME}/.kube/config}:/home/mcpuser/.kube/config:ro
+      # Mount AWS credentials for local AWS auth (not needed in EC2/EKS with instance roles)
+      - ${HOME}/.aws:/home/mcpuser/.aws:ro
+
+    # Resource limits
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: "256M"
+        reservations:
+          cpus: "0.1"
+          memory: "64M"
+
+    # Restart policy
+    restart: unless-stopped
+
+    # Health check
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8080/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+
+    # Security options
+    security_opt:
+      - no-new-privileges:true
+    read_only: false  # Python needs write for bytecode cache
+    tmpfs:
+      - /tmp:size=50m,noexec,nosuid
