@@ -11,7 +11,8 @@ from kubernetes.client.rest import ApiException
 
 from ..audit import get_audit_logger
 from ..config import get_settings
-from ..k8s_client import get_client_manager, handle_k8s_api_error
+from ..cluster_pool import resolve_manager
+from ..k8s_client import handle_k8s_api_error
 from ..models import DeploymentInfo, OperationResult
 from ..utils import format_age, safe_get
 
@@ -27,11 +28,12 @@ def register_deployment_tools(mcp) -> None:
     def list_deployments(
         namespace: Annotated[str, "Namespace to list deployments in. Use 'all' for all namespaces"] = "default",
         label_selector: Annotated[str, "Label selector filter (e.g. 'app=nginx')"] = "",
-    ) -> str:
+        cluster: Annotated[str, "Target cluster name or alias (uses default if empty)"] = "",
+) -> str:
         """
         List deployments in a namespace, including replica counts and rollout status.
         """
-        manager = get_client_manager()
+        manager = resolve_manager(cluster)
         audit = get_audit_logger()
         try:
             apps = manager.apps_v1()
@@ -60,9 +62,10 @@ def register_deployment_tools(mcp) -> None:
     def get_deployment(
         name: Annotated[str, "Name of the deployment"],
         namespace: Annotated[str, "Namespace of the deployment"] = "default",
-    ) -> str:
+        cluster: Annotated[str, "Target cluster name or alias (uses default if empty)"] = "",
+) -> str:
         """Get detailed information about a specific deployment."""
-        manager = get_client_manager()
+        manager = resolve_manager(cluster)
         audit = get_audit_logger()
         try:
             apps = manager.apps_v1()
@@ -101,7 +104,8 @@ def register_deployment_tools(mcp) -> None:
         replicas: Annotated[int, "Desired number of replicas (0-100)"],
         namespace: Annotated[str, "Namespace of the deployment"] = "default",
         dry_run: Annotated[bool, "If true, simulate the operation without making changes"] = False,
-    ) -> str:
+        cluster: Annotated[str, "Target cluster name or alias (uses default if empty)"] = "",
+) -> str:
         """
         Scale a deployment to the specified number of replicas.
 
@@ -113,7 +117,7 @@ def register_deployment_tools(mcp) -> None:
         Use dry_run=true first to validate the operation.
         """
         settings = get_settings()
-        manager = get_client_manager()
+        manager = resolve_manager(cluster)
         audit = get_audit_logger()
 
         # Safety checks
@@ -176,14 +180,15 @@ def register_deployment_tools(mcp) -> None:
         name: Annotated[str, "Name of the deployment to restart"],
         namespace: Annotated[str, "Namespace of the deployment"] = "default",
         dry_run: Annotated[bool, "If true, simulate the operation without making changes"] = False,
-    ) -> str:
+        cluster: Annotated[str, "Target cluster name or alias (uses default if empty)"] = "",
+) -> str:
         """
         Perform a rolling restart of a deployment (equivalent to kubectl rollout restart).
         Adds a restart annotation to trigger a new rollout without changing replicas.
         """
         import datetime as dt
         settings = get_settings()
-        manager = get_client_manager()
+        manager = resolve_manager(cluster)
         audit = get_audit_logger()
 
         if settings.is_protected_namespace(namespace):
@@ -236,12 +241,13 @@ def register_deployment_tools(mcp) -> None:
     def get_deployment_history(
         name: Annotated[str, "Name of the deployment"],
         namespace: Annotated[str, "Namespace of the deployment"] = "default",
-    ) -> str:
+        cluster: Annotated[str, "Target cluster name or alias (uses default if empty)"] = "",
+) -> str:
         """
         Get the rollout history of a deployment showing revision details.
         Useful for identifying which revision to rollback to.
         """
-        manager = get_client_manager()
+        manager = resolve_manager(cluster)
         audit = get_audit_logger()
         try:
             apps = manager.apps_v1()

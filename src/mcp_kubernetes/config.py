@@ -107,6 +107,30 @@ class Settings(BaseSettings):
     default_cluster: str = Field(default="")
 
     # -------------------------------------------------------------------------
+    # Approval workflow
+    # -------------------------------------------------------------------------
+    # Require out-of-band approval for destructive operations
+    require_approval: bool = Field(default=False)
+    # Approval TTL in seconds (default 30 min)
+    approval_ttl_seconds: int = Field(default=1800, ge=60, le=86400)
+    # Webhook URL for approval notifications (Slack/Teams/generic)
+    approval_webhook_url: str = Field(default="")
+    # Webhook type: "slack" | "teams" | "generic"
+    approval_webhook_type: str = Field(default="slack")
+    # Allow the requester to approve their own request (always False in production)
+    approval_allow_self_approve: bool = Field(default=False)
+
+    # -------------------------------------------------------------------------
+    # Namespace-level write scoping policy
+    # -------------------------------------------------------------------------
+    # JSON array of policy rules (see namespace_policy.py for schema)
+    namespace_policy: str = Field(default="")
+    # Path to a JSON file containing namespace policy rules
+    namespace_policy_file: str = Field(default="")
+    # If true, identities with no matching policy are denied entirely
+    namespace_policy_deny_unknown: bool = Field(default=False)
+
+    # -------------------------------------------------------------------------
     # Validators
     # -------------------------------------------------------------------------
     @field_validator("protected_namespaces", mode="before")

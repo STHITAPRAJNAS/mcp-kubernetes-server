@@ -11,7 +11,8 @@ from kubernetes.client.rest import ApiException
 from kubernetes.stream import stream
 
 from ..audit import get_audit_logger
-from ..k8s_client import get_client_manager, handle_k8s_api_error
+from ..cluster_pool import resolve_manager
+from ..k8s_client import handle_k8s_api_error
 from ..models import PodInfo, ContainerStatus
 from ..utils import (
     extract_container_state,
@@ -28,6 +29,7 @@ def register_pod_tools(mcp) -> None:
 
     @mcp.tool
     def list_pods(
+        cluster: Annotated[str, "Target cluster name or alias (uses default if empty)"] = "",
         namespace: Annotated[str, "Namespace to list pods in. Use 'all' for all namespaces"] = "default",
         label_selector: Annotated[str, "Label selector filter (e.g. 'app=nginx,env=prod')"] = "",
         field_selector: Annotated[str, "Field selector filter (e.g. 'status.phase=Running')"] = "",
@@ -36,7 +38,7 @@ def register_pod_tools(mcp) -> None:
         List pods in a namespace or across all namespaces.
         Returns pod status, phase, node assignment, IP, and container states.
         """
-        manager = get_client_manager()
+        manager = resolve_manager(cluster)
         audit = get_audit_logger()
         try:
             core = manager.core_v1()
@@ -72,6 +74,7 @@ def register_pod_tools(mcp) -> None:
 
     @mcp.tool
     def get_pod(
+        cluster: Annotated[str, "Target cluster name or alias"] = "",
         name: Annotated[str, "Name of the pod"],
         namespace: Annotated[str, "Namespace of the pod"] = "default",
     ) -> str:
@@ -79,7 +82,7 @@ def register_pod_tools(mcp) -> None:
         Get detailed information about a specific pod including all container statuses,
         conditions, resource requests/limits, and recent events.
         """
-        manager = get_client_manager()
+        manager = resolve_manager(cluster)
         audit = get_audit_logger()
         try:
             core = manager.core_v1()
@@ -129,6 +132,7 @@ def register_pod_tools(mcp) -> None:
 
     @mcp.tool
     def get_pod_logs(
+        cluster: Annotated[str, "Target cluster name or alias"] = "",
         name: Annotated[str, "Name of the pod"],
         namespace: Annotated[str, "Namespace of the pod"] = "default",
         container: Annotated[str, "Container name (required for multi-container pods)"] = "",
@@ -141,7 +145,7 @@ def register_pod_tools(mcp) -> None:
         Supports multi-container pods, previous instance logs for crash debugging,
         and time-based filtering.
         """
-        manager = get_client_manager()
+        manager = resolve_manager(cluster)
         audit = get_audit_logger()
 
         # Cap tail lines for safety
@@ -185,6 +189,7 @@ def register_pod_tools(mcp) -> None:
 
     @mcp.tool
     def exec_pod_command(
+        cluster: Annotated[str, "Target cluster name or alias"] = "",
         name: Annotated[str, "Name of the pod"],
         command: Annotated[str, "Shell command to execute (e.g. 'ls -la /app', 'cat /etc/hosts')"],
         namespace: Annotated[str, "Namespace of the pod"] = "default",
@@ -200,7 +205,7 @@ def register_pod_tools(mcp) -> None:
         - Interactive commands (vim, less, top) are not supported
         - For diagnostic commands only - avoid modifying container state via exec
         """
-        manager = get_client_manager()
+        manager = resolve_manager(cluster)
         audit = get_audit_logger()
 
         # Safety: cap timeout

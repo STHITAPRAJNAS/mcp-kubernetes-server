@@ -105,8 +105,8 @@ class AWSAuthProvider(AuthProvider):
         # Step 3: Generate EKS token
         token = self._generate_eks_token(eks_cluster_name, credentials)
 
-        # Step 4: Configure the Kubernetes Python client
-        await self._configure_k8s_client(cluster_info, token)
+        # Step 4: Build a per-cluster ApiClient (no global config mutation)
+        api_client = await self._build_api_client(cluster_info, token)
 
         # Step 5: Determine identity for audit logging
         identity = await self._get_caller_identity()
@@ -121,6 +121,7 @@ class AWSAuthProvider(AuthProvider):
             environment="aws",
             identity=identity,
             cluster_name=eks_cluster_name,
+            api_client=api_client,
             expires_at=expires_at,
             metadata={
                 "region": self._region,
@@ -302,12 +303,16 @@ class AWSAuthProvider(AuthProvider):
         token_body = base64.urlsafe_b64encode(presigned_url.encode()).rstrip(b"=").decode()
         return f"{_EKS_TOKEN_PREFIX}{token_body}"
 
-    async def _configure_k8s_client(self, cluster_info: dict, token: str) -> None:
-        """Configure the Kubernetes Python client with EKS cluster credentials."""
+    async def _build_api_client(self, cluster_info: dict, token: str) -> "k8s_client.ApiClient":
+        """
+        Build an isolated ApiClient for this EKS cluster.
+        Does NOT touch the process-global configuration, so multiple clusters
+        can be connected simultaneously.
+        """
         endpoint = cluster_info["endpoint"]
         ca_data = cluster_info["certificateAuthority"]["data"]
 
-        # Write CA cert to a temporary file (k8s client needs file path)
+        # Write CA cert to a temp file per cluster (k8s client needs a file path)
         ca_bytes = base64.b64decode(ca_data)
 
         if self._temp_ca_file and self._temp_ca_file.exists():
@@ -324,14 +329,14 @@ class AWSAuthProvider(AuthProvider):
         tmp.close()
         self._temp_ca_file = Path(tmp.name)
 
-        # Configure the kubernetes client
+        # Build a per-instance Configuration + ApiClient
         configuration = k8s_client.Configuration()
         configuration.host = endpoint
         configuration.ssl_ca_cert = str(self._temp_ca_file)
         configuration.api_key = {"authorization": f"Bearer {token}"}
         configuration.verify_ssl = True
 
-        k8s_client.Configuration.set_default(configuration)
+        return k8s_client.ApiClient(configuration=configuration)
 
     async def _get_caller_identity(self) -> str:
         """Return the ARN of the current IAM identity for audit logging."""

@@ -2,31 +2,26 @@
 MCP Kubernetes Server - Main entrypoint.
 
 Enterprise-grade MCP server for Kubernetes operations using FastMCP.
-Supports:
-- Local kubeconfig authentication (for application engineers)
-- AWS EKS IAM role authentication (for AWS-deployed workloads)
-- Comprehensive audit logging
-- Destructive operation guards
-- Multi-cluster support
+Supports simultaneous connections to multiple EKS clusters via ClusterConnectionPool.
 """
 
 from __future__ import annotations
 
 import asyncio
 import logging
-import os
 import signal
 import sys
-from contextlib import asynccontextmanager
-from typing import AsyncIterator
+from typing import Annotated
 
 import structlog
 from fastmcp import FastMCP
 
+from .approval import initialize_approval_manager
 from .audit import initialize_audit_logger
 from .auth.factory import create_auth_provider
+from .cluster_pool import initialize_cluster_pool, get_cluster_pool, resolve_manager
 from .config import Settings, get_settings
-from .k8s_client import KubernetesClientManager, initialize_client_manager
+from .namespace_policy import initialize_policy_engine
 
 # Tool registrars
 from .tools.pods import register_pod_tools
@@ -47,9 +42,7 @@ from .prompts.diagnose import register_diagnostic_prompts
 
 
 def configure_logging(settings: Settings) -> None:
-    """Configure structured logging."""
     log_level = getattr(logging, settings.log_level.value, logging.INFO)
-
     if settings.json_logs:
         structlog.configure(
             processors=[
@@ -72,8 +65,6 @@ def configure_logging(settings: Settings) -> None:
             format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
             stream=sys.stderr,
         )
-
-    # Set log levels
     logging.getLogger("kubernetes").setLevel(logging.WARNING)
     logging.getLogger("urllib3").setLevel(logging.WARNING)
     logging.getLogger("boto3").setLevel(logging.WARNING)
@@ -82,35 +73,31 @@ def configure_logging(settings: Settings) -> None:
 
 
 def create_server(settings: Settings | None = None) -> FastMCP:
-    """
-    Create and configure the FastMCP server with all tools, resources, and prompts.
-
-    This is the factory function - it builds the server object but does not start it.
-    """
+    """Create and configure the FastMCP server."""
     s = settings or get_settings()
 
     mcp = FastMCP(
         name="mcp-kubernetes-server",
         instructions="""
-You are connected to a Kubernetes cluster via the MCP Kubernetes Server.
+You are connected to one or more Kubernetes clusters via the MCP Kubernetes Server.
 
-Available capabilities:
-- READ: List and inspect pods, deployments, services, namespaces, nodes, events, logs
-- WRITE: Scale deployments, restart workloads, create namespaces/configmaps, apply manifests
-- DESTRUCTIVE: Delete pods, deployments, namespaces, configmaps, services (with guards)
-- EXEC: Run commands inside pods for diagnostics
+MULTI-CLUSTER: All tools accept an optional `cluster` parameter (name or alias).
+  - Omit it to use the default cluster
+  - Use list_connected_clusters to see available clusters
+  - Use switch_cluster to connect to additional clusters
 
-Safety rules enforced automatically:
-1. Protected namespaces (kube-system, kube-public, kube-node-lease) cannot be modified
-2. Destructive operations require a confirmation token (confirm_name must match resource name)
-3. All operations are audit-logged
-4. Dry-run mode is available for all write/delete operations
+SAFETY LAYERS on destructive operations (applied in order):
+  1. MCP_K8S_ALLOW_DESTRUCTIVE must be true
+  2. Protected namespaces (kube-system etc.) always blocked
+  3. Namespace policy: your identity must have permission for that namespace
+  4. confirm_name must equal the resource name exactly
+  5. approval_id required if approval workflow is enabled
+     - If blocked by approval: you get an approval_id back
+     - An approver calls approve_operation(approval_id=...)
+     - You re-run with approval_id=<the_id>
 
-Best practices:
-- Always use dry_run=true before destructive operations
-- Check cluster health with the k8s://cluster/health resource
-- Use the diagnose_pod or diagnose_deployment prompts for troubleshooting
-- Secret values are NEVER returned - only key names are shown
+SECRETS: Values are NEVER returned. Only key names and metadata.
+DRY-RUN: Available on all write/delete operations — always try this first.
 """,
     )
 
@@ -128,20 +115,68 @@ Best practices:
     register_destructive_tools(mcp)
 
     # -------------------------------------------------------------------------
-    # Register additional utility tools directly on the server
+    # Cluster management tools
     # -------------------------------------------------------------------------
 
     @mcp.tool
-    def get_cluster_info() -> str:
+    def list_connected_clusters() -> str:
         """
-        Get current cluster connection information: cluster name, identity,
-        server version, node count, and authentication mode.
+        List all clusters currently connected in the pool.
+        Shows cluster name, identity, and environment for each.
         """
-        from .k8s_client import get_client_manager, handle_k8s_api_error
+        try:
+            pool = get_cluster_pool()
+            clusters = pool.list_connected_clusters()
+        except RuntimeError:
+            return "Cluster pool not initialized."
+
+        if not clusters:
+            return "No clusters connected."
+
+        s = get_settings()
+        lines = [f"Connected clusters ({len(clusters)}):"]
+        for c in clusters:
+            aliases = [alias for alias, name in s.cluster_map.items() if name == c["cluster"]]
+            alias_str = f" [aliases: {', '.join(aliases)}]" if aliases else ""
+            lines.append(
+                f"  - {c['cluster']}{alias_str}\n"
+                f"      Identity: {c['identity']}\n"
+                f"      Environment: {c['environment']}"
+            )
+        return "\n".join(lines)
+
+    @mcp.tool
+    def connect_cluster(
+        cluster: Annotated[str, "Cluster name or alias to connect to"],
+    ) -> str:
+        """
+        Connect to an additional cluster and add it to the pool.
+        In AWS mode: accepts an EKS cluster name or a configured alias.
+        In local mode: accepts a kubeconfig context name.
+        After connecting, specify cluster=<name> in any tool call to target it.
+        """
+        try:
+            manager = resolve_manager(cluster)
+            return (
+                f"Connected to cluster '{manager.current_cluster}'\n"
+                f"  Identity: {manager.current_identity}\n"
+                f"  Environment: {manager.environment}"
+            )
+        except Exception as exc:
+            return f"Error connecting to cluster '{cluster}': {exc}"
+
+    @mcp.tool
+    def get_cluster_info(
+        cluster: Annotated[str, "Target cluster (uses default if empty)"] = "",
+    ) -> str:
+        """
+        Get current cluster connection info: version, node/namespace counts, identity.
+        """
+        from .k8s_client import handle_k8s_api_error
         from .models import ClusterInfo
         from kubernetes.client.rest import ApiException
 
-        manager = get_client_manager()
+        manager = resolve_manager(cluster)
         try:
             version_api = manager.version_api()
             version_info = version_api.get_code()
@@ -150,8 +185,8 @@ Best practices:
             core = manager.core_v1()
             nodes = core.list_node()
             namespaces = core.list_namespace()
-
             auth_meta = manager.get_auth_metadata()
+
             info = ClusterInfo(
                 server_version=server_version,
                 platform=version_info.platform,
@@ -168,62 +203,27 @@ Best practices:
             return f"Error: {handle_k8s_api_error(exc, 'get_cluster_info')}"
 
     @mcp.tool
-    def switch_cluster(
-        cluster: str,
-    ) -> str:
-        """
-        Switch the active cluster connection.
-
-        In LOCAL mode: switches kubeconfig context.
-        In AWS mode: connects to a different EKS cluster by name or alias.
-
-        Use get_cluster_info to verify the current connection after switching.
-        """
-        import asyncio
-        from .k8s_client import initialize_client_manager
-        from .auth.factory import create_auth_provider
-
-        settings = get_settings()
-        auth_provider = create_auth_provider(settings)
-
-        try:
-            loop = asyncio.get_event_loop()
-            loop.run_until_complete(initialize_client_manager(auth_provider, settings, cluster=cluster))
-            from .k8s_client import get_client_manager
-            manager = get_client_manager()
-            return (
-                f"Switched to cluster '{cluster}'\n"
-                f"Identity: {manager.current_identity}\n"
-                f"Cluster: {manager.current_cluster}"
-            )
-        except Exception as exc:
-            return f"Error switching cluster: {exc}"
-
-    @mcp.tool
     def list_available_contexts() -> str:
-        """
-        List available kubeconfig contexts (LOCAL mode) or configured cluster aliases (AWS mode).
-        """
+        """List kubeconfig contexts (local) or configured cluster aliases (AWS)."""
         settings = get_settings()
-        from .config import EnvironmentMode
-        from .auth.local import LocalAuthProvider
-
         lines = []
-        if settings.env in (settings.env.LOCAL, settings.env.AUTO):
+        from .config import EnvironmentMode
+        if settings.env in (EnvironmentMode.LOCAL, EnvironmentMode.AUTO):
             try:
+                from .auth.local import LocalAuthProvider
                 provider = LocalAuthProvider(
                     kubeconfig_path=settings.kubeconfig,
                     default_context=settings.default_context,
                 )
                 contexts = provider.list_available_contexts()
-                lines.append("Available kubeconfig contexts:")
+                lines.append("Kubeconfig contexts:")
                 for ctx in contexts:
                     name = ctx.get("name", "unknown")
                     cluster = ctx.get("context", {}).get("cluster", "?")
                     user = ctx.get("context", {}).get("user", "?")
                     lines.append(f"  - {name} (cluster={cluster}, user={user})")
             except Exception as exc:
-                lines.append(f"Could not list kubeconfig contexts: {exc}")
+                lines.append(f"Could not list contexts: {exc}")
 
         if settings.cluster_map:
             lines.append("\nConfigured cluster aliases (AWS):")
@@ -232,7 +232,36 @@ Best practices:
 
         if not lines:
             lines.append("No contexts or cluster aliases configured.")
-            lines.append("Set KUBECONFIG (local) or MCP_K8S_CLUSTER_MAP (AWS).")
+
+        return "\n".join(lines)
+
+    @mcp.tool
+    def show_namespace_policy(
+        identity: Annotated[str, "IAM ARN or kubeconfig user to evaluate (empty = your own identity)"] = "",
+        namespace: Annotated[str, "Namespace to check access for"] = "default",
+        cluster: Annotated[str, "Target cluster (uses default if empty)"] = "",
+    ) -> str:
+        """
+        Show what namespace access a given identity has according to the namespace policy.
+        Useful for debugging access issues and understanding permission boundaries.
+        """
+        from .namespace_policy import get_policy_engine, Operation
+
+        manager = resolve_manager(cluster)
+        check_identity = identity or manager.current_identity
+
+        engine = get_policy_engine()
+        lines = [f"Namespace policy for identity: {check_identity}"]
+        lines.append(f"Checking namespace: {namespace}")
+        lines.append("")
+
+        for op in Operation:
+            decision = engine.evaluate(check_identity, namespace, op)
+            if decision.allowed:
+                status = "ALLOWED" + (" (requires approval)" if decision.needs_approval else "")
+            else:
+                status = f"DENIED: {decision.reason}"
+            lines.append(f"  {op.value:<15} {status}")
 
         return "\n".join(lines)
 
@@ -250,76 +279,64 @@ Best practices:
 
 
 async def startup(settings: Settings) -> None:
-    """Initialize authentication and Kubernetes client on startup."""
     logger = logging.getLogger(__name__)
-
     logger.info(
-        "Starting MCP Kubernetes Server",
+        "Starting MCP Kubernetes Server v1.0",
         extra={
             "environment": settings.env.value,
             "transport": settings.transport.value,
             "allow_destructive": settings.allow_destructive,
+            "require_approval": settings.require_approval,
             "dry_run": settings.dry_run,
-        }
+        },
     )
 
     # Initialize audit logging
-    audit = initialize_audit_logger(settings.audit_log_file)
+    initialize_audit_logger(settings.audit_log_file)
 
-    # Initialize authentication and connect to cluster
-    auth_provider = create_auth_provider(settings)
-    default_cluster = settings.default_cluster or settings.eks_cluster_name or None
+    # Initialize approval workflow
+    initialize_approval_manager(
+        require_approval=settings.require_approval,
+        ttl_seconds=settings.approval_ttl_seconds,
+        webhook_url=settings.approval_webhook_url,
+        webhook_type=settings.approval_webhook_type,
+        allow_self_approve=settings.approval_allow_self_approve,
+    )
 
+    # Initialize namespace policy engine
+    initialize_policy_engine(settings)
+
+    # Initialize cluster connection pool (pre-connects to all configured clusters)
     try:
-        manager = await initialize_client_manager(
-            auth_provider,
-            settings,
-            cluster=default_cluster,
-        )
-        logger.info(
-            "Connected to cluster",
-            extra={
-                "cluster": manager.current_cluster,
-                "identity": manager.current_identity,
-                "environment": manager.environment,
-            }
-        )
-
-        audit.log(
-            audit.__class__.__module__ and __import__("mcp_kubernetes.audit", fromlist=["OperationType"]).OperationType.AUTH,
-            "server_startup", "Cluster", manager.current_cluster, None,
-            manager.current_identity, manager.current_cluster, True,
-        )
-
+        pool = await initialize_cluster_pool(settings)
+        connected = pool.list_connected_clusters()
+        for c in connected:
+            logger.info(
+                "Connected to cluster '%s' as '%s' (%s)",
+                c["cluster"], c["identity"], c["environment"],
+            )
     except Exception as exc:
-        logger.error("Failed to authenticate to Kubernetes cluster: %s", exc)
-        logger.error(
-            "Check your configuration:\n"
-            "  - Local: verify kubeconfig at ~/.kube/config or $KUBECONFIG\n"
-            "  - AWS: verify MCP_K8S_EKS_CLUSTER_NAME and AWS credentials"
+        logger.warning(
+            "Could not pre-connect to cluster(s): %s. "
+            "The server will still start — connections will be retried per-request.",
+            exc,
         )
-        # Don't crash on startup - allow the server to start and report errors per-tool
 
 
 def main() -> None:
-    """Main entrypoint for the MCP Kubernetes Server."""
     settings = get_settings()
     configure_logging(settings)
-
     logger = logging.getLogger(__name__)
 
-    # Perform async startup (auth + cluster connection)
     try:
         asyncio.run(startup(settings))
     except KeyboardInterrupt:
         sys.exit(0)
     except Exception as exc:
-        logger.warning("Startup had errors (server will still start): %s", exc)
+        logger.warning("Startup errors (server will still start): %s", exc)
 
-    # Create and run the MCP server
     mcp = create_server(settings)
 
-    # Handle graceful shutdown
     def handle_shutdown(signum, frame):
         logger.info("Shutting down MCP Kubernetes Server...")
         sys.exit(0)
@@ -327,11 +344,7 @@ def main() -> None:
     signal.signal(signal.SIGTERM, handle_shutdown)
     signal.signal(signal.SIGINT, handle_shutdown)
 
-    logger.info(
-        "MCP Kubernetes Server started",
-        extra={"transport": settings.transport.value}
-    )
-
+    logger.info("MCP Kubernetes Server started (transport=%s)", settings.transport.value)
     mcp.run(transport=settings.transport.value)
 
 

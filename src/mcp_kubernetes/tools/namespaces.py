@@ -11,7 +11,8 @@ from kubernetes.client.rest import ApiException
 
 from ..audit import get_audit_logger
 from ..config import get_settings
-from ..k8s_client import get_client_manager, handle_k8s_api_error
+from ..cluster_pool import resolve_manager
+from ..k8s_client import handle_k8s_api_error
 from ..models import NamespaceInfo, OperationResult
 from ..utils import format_age
 
@@ -24,11 +25,12 @@ def register_namespace_tools(mcp) -> None:
     @mcp.tool
     def list_namespaces(
         label_selector: Annotated[str, "Label selector filter"] = "",
-    ) -> str:
+        cluster: Annotated[str, "Target cluster name or alias (uses default if empty)"] = "",
+) -> str:
         """
         List all namespaces in the cluster with their status and age.
         """
-        manager = get_client_manager()
+        manager = resolve_manager(cluster)
         audit = get_audit_logger()
         try:
             core = manager.core_v1()
@@ -67,7 +69,8 @@ def register_namespace_tools(mcp) -> None:
         name: Annotated[str, "Name of the namespace to create"],
         labels: Annotated[str, "Comma-separated key=value labels (e.g. 'env=staging,team=backend')"] = "",
         dry_run: Annotated[bool, "If true, simulate the operation without making changes"] = False,
-    ) -> str:
+        cluster: Annotated[str, "Target cluster name or alias (uses default if empty)"] = "",
+) -> str:
         """
         Create a new namespace with optional labels.
         Namespace names must comply with DNS label rules.
@@ -75,7 +78,7 @@ def register_namespace_tools(mcp) -> None:
         from kubernetes import client as k8s_client
 
         settings = get_settings()
-        manager = get_client_manager()
+        manager = resolve_manager(cluster)
         audit = get_audit_logger()
 
         from ..utils import validate_namespace

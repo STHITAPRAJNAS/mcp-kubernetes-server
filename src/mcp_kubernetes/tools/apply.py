@@ -15,7 +15,8 @@ from kubernetes.client.rest import ApiException
 
 from ..audit import get_audit_logger
 from ..config import get_settings
-from ..k8s_client import get_client_manager, handle_k8s_api_error
+from ..cluster_pool import resolve_manager
+from ..k8s_client import handle_k8s_api_error
 from ..models import OperationResult
 
 logger = logging.getLogger(__name__)
@@ -41,7 +42,8 @@ def register_apply_tools(mcp) -> None:
         manifest: Annotated[str, "YAML or JSON Kubernetes manifest to apply"],
         dry_run: Annotated[bool, "If true, validate and simulate without applying changes"] = False,
         force: Annotated[bool, "If true, force server-side apply (overwrites conflicts). Use with extreme caution."] = False,
-    ) -> str:
+        cluster: Annotated[str, "Target cluster name or alias (uses default if empty)"] = "",
+) -> str:
         """
         Apply a Kubernetes manifest (YAML or JSON) to the cluster.
         Equivalent to 'kubectl apply' with server-side apply.
@@ -55,7 +57,7 @@ def register_apply_tools(mcp) -> None:
         Always use dry_run=true first to validate your manifest.
         """
         settings = get_settings()
-        manager = get_client_manager()
+        manager = resolve_manager(cluster)
         audit = get_audit_logger()
         is_dry_run = dry_run or settings.dry_run
 
@@ -135,7 +137,8 @@ def register_apply_tools(mcp) -> None:
     @mcp.tool
     def validate_manifest(
         manifest: Annotated[str, "YAML or JSON Kubernetes manifest to validate"],
-    ) -> str:
+        cluster: Annotated[str, "Target cluster name or alias (uses default if empty)"] = "",
+) -> str:
         """
         Validate a Kubernetes manifest against the cluster's API schema.
         Uses server-side dry-run - the manifest is NOT applied.
@@ -151,7 +154,7 @@ def register_apply_tools(mcp) -> None:
 def _do_validate(manifest: str) -> str:
     """Internal validation using dry-run."""
     settings = get_settings()
-    manager = get_client_manager()
+    manager = resolve_manager(cluster)
     audit = get_audit_logger()
 
     try:

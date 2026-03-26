@@ -10,7 +10,8 @@ from typing import Annotated
 from kubernetes.client.rest import ApiException
 
 from ..audit import get_audit_logger
-from ..k8s_client import get_client_manager, handle_k8s_api_error
+from ..cluster_pool import resolve_manager
+from ..k8s_client import handle_k8s_api_error
 from ..models import NodeInfo, NodeCondition
 from ..utils import extract_node_roles, format_age, format_resource_quantity, safe_get
 
@@ -23,11 +24,12 @@ def register_node_tools(mcp) -> None:
     @mcp.tool
     def list_nodes(
         label_selector: Annotated[str, "Label selector filter (e.g. 'node-role.kubernetes.io/worker=')"] = "",
-    ) -> str:
+        cluster: Annotated[str, "Target cluster name or alias (uses default if empty)"] = "",
+) -> str:
         """
         List all nodes in the cluster with their status, roles, versions, and resource capacity.
         """
-        manager = get_client_manager()
+        manager = resolve_manager(cluster)
         audit = get_audit_logger()
         try:
             core = manager.core_v1()
@@ -51,12 +53,13 @@ def register_node_tools(mcp) -> None:
     @mcp.tool
     def get_node(
         name: Annotated[str, "Name of the node"],
-    ) -> str:
+        cluster: Annotated[str, "Target cluster name or alias (uses default if empty)"] = "",
+) -> str:
         """
         Get detailed information about a specific node including conditions,
         allocatable resources, taints, and running pod count.
         """
-        manager = get_client_manager()
+        manager = resolve_manager(cluster)
         audit = get_audit_logger()
         try:
             core = manager.core_v1()
@@ -101,12 +104,13 @@ def register_node_tools(mcp) -> None:
     def describe_node_pods(
         name: Annotated[str, "Name of the node"],
         namespace: Annotated[str, "Filter by namespace. Use 'all' for all namespaces"] = "all",
-    ) -> str:
+        cluster: Annotated[str, "Target cluster name or alias (uses default if empty)"] = "",
+) -> str:
         """
         List all pods running on a specific node.
         Useful for understanding node utilization and planning maintenance.
         """
-        manager = get_client_manager()
+        manager = resolve_manager(cluster)
         audit = get_audit_logger()
         try:
             core = manager.core_v1()

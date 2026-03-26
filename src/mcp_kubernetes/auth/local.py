@@ -42,8 +42,11 @@ class LocalAuthProvider(AuthProvider):
         """Load kubeconfig and configure the Kubernetes client."""
         context = cluster or self._default_context
 
+        # Use new_client_from_config to get an isolated ApiClient that does NOT
+        # touch the process-global configuration. This allows multiple simultaneous
+        # connections to different clusters (different contexts).
         try:
-            config.load_kube_config(
+            api_client = config.new_client_from_config(
                 config_file=self._kubeconfig_path,
                 context=context,
             )
@@ -79,7 +82,8 @@ class LocalAuthProvider(AuthProvider):
             environment="local",
             identity=identity,
             cluster_name=cluster_name,
-            expires_at=None,  # kubeconfig tokens may have their own expiry
+            api_client=api_client,
+            expires_at=None,
             metadata={
                 "context": active_context.get("name"),
                 "kubeconfig": str(self._kubeconfig_path or Path.home() / ".kube" / "config"),
