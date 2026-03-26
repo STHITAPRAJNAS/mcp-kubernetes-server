@@ -10,7 +10,8 @@ import logging
 
 from kubernetes.client.rest import ApiException
 
-from ..k8s_client import get_client_manager, handle_k8s_api_error
+from ..cluster_pool import resolve_manager
+from ..k8s_client import handle_k8s_api_error
 from ..models import ClusterInfo
 from ..utils import format_age
 
@@ -26,7 +27,7 @@ def register_cluster_resources(mcp) -> None:
         Current Kubernetes cluster information including version, node count,
         namespace count, and authentication context.
         """
-        manager = get_client_manager()
+        manager = resolve_manager()
         try:
             version_api = manager.version_api()
             version_info = version_api.get_code()
@@ -62,7 +63,7 @@ def register_cluster_resources(mcp) -> None:
     @mcp.resource("k8s://cluster/namespaces")
     def cluster_namespaces() -> str:
         """List of all namespaces in the cluster."""
-        manager = get_client_manager()
+        manager = resolve_manager()
         try:
             core = manager.core_v1()
             namespaces = core.list_namespace()
@@ -74,7 +75,7 @@ def register_cluster_resources(mcp) -> None:
     @mcp.resource("k8s://cluster/nodes")
     def cluster_nodes() -> str:
         """List of all nodes in the cluster with their status."""
-        manager = get_client_manager()
+        manager = resolve_manager()
         try:
             core = manager.core_v1()
             nodes = core.list_node()
@@ -98,7 +99,7 @@ def register_cluster_resources(mcp) -> None:
         """
         Overall cluster health summary: warning events, not-ready pods, not-ready nodes.
         """
-        manager = get_client_manager()
+        manager = resolve_manager()
         try:
             core = manager.core_v1()
 

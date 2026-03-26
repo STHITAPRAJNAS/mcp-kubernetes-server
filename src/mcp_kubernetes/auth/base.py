@@ -5,6 +5,10 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from datetime import datetime
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from kubernetes import client as k8s_client
 
 
 @dataclass
@@ -14,6 +18,9 @@ class AuthResult:
     environment: str  # "local" or "aws"
     identity: str  # Human-readable identity (username, role ARN, etc.)
     cluster_name: str  # Kubernetes cluster name or context
+    # Each AuthResult carries its own ApiClient so multiple clusters can
+    # coexist simultaneously without touching the global configuration.
+    api_client: "k8s_client.ApiClient | None" = None
     expires_at: datetime | None = None
     metadata: dict = field(default_factory=dict)
 

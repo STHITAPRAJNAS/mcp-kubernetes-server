@@ -13,7 +13,8 @@ from kubernetes.client.rest import ApiException
 
 from ..audit import get_audit_logger
 from ..config import get_settings
-from ..k8s_client import get_client_manager, handle_k8s_api_error
+from ..cluster_pool import resolve_manager
+from ..k8s_client import handle_k8s_api_error
 from ..models import ConfigMapInfo, SecretInfo, OperationResult
 from ..utils import format_age, mask_secret_value
 
@@ -27,11 +28,12 @@ def register_configmap_secret_tools(mcp) -> None:
     def list_configmaps(
         namespace: Annotated[str, "Namespace to list configmaps in. Use 'all' for all namespaces"] = "default",
         label_selector: Annotated[str, "Label selector filter"] = "",
-    ) -> str:
+        cluster: Annotated[str, "Target cluster name or alias (uses default if empty)"] = "",
+) -> str:
         """
         List ConfigMaps showing their key names (not values).
         """
-        manager = get_client_manager()
+        manager = resolve_manager(cluster)
         audit = get_audit_logger()
         try:
             core = manager.core_v1()
@@ -71,12 +73,13 @@ def register_configmap_secret_tools(mcp) -> None:
         name: Annotated[str, "Name of the configmap"],
         namespace: Annotated[str, "Namespace of the configmap"] = "default",
         show_values: Annotated[bool, "If true, show the actual key values (not recommended for sensitive data)"] = False,
-    ) -> str:
+        cluster: Annotated[str, "Target cluster name or alias (uses default if empty)"] = "",
+) -> str:
         """
         Get a ConfigMap. By default shows key names only.
         Use show_values=true to display actual values (use with caution).
         """
-        manager = get_client_manager()
+        manager = resolve_manager(cluster)
         audit = get_audit_logger()
         try:
             core = manager.core_v1()
@@ -115,12 +118,13 @@ def register_configmap_secret_tools(mcp) -> None:
     def list_secrets(
         namespace: Annotated[str, "Namespace to list secrets in. Use 'all' for all namespaces"] = "default",
         label_selector: Annotated[str, "Label selector filter"] = "",
-    ) -> str:
+        cluster: Annotated[str, "Target cluster name or alias (uses default if empty)"] = "",
+) -> str:
         """
         List Secrets showing ONLY their names and key names.
         Secret values are NEVER exposed - this is intentional for security.
         """
-        manager = get_client_manager()
+        manager = resolve_manager(cluster)
         audit = get_audit_logger()
         try:
             core = manager.core_v1()
@@ -168,13 +172,14 @@ def register_configmap_secret_tools(mcp) -> None:
     def get_secret_metadata(
         name: Annotated[str, "Name of the secret"],
         namespace: Annotated[str, "Namespace of the secret"] = "default",
-    ) -> str:
+        cluster: Annotated[str, "Target cluster name or alias (uses default if empty)"] = "",
+) -> str:
         """
         Get metadata about a Secret (name, type, keys) WITHOUT exposing any values.
         Secret values are NEVER returned. Use this to verify a secret exists and
         check which keys it contains.
         """
-        manager = get_client_manager()
+        manager = resolve_manager(cluster)
         audit = get_audit_logger()
         try:
             core = manager.core_v1()
@@ -206,13 +211,14 @@ def register_configmap_secret_tools(mcp) -> None:
         namespace: Annotated[str, "Namespace for the configmap"] = "default",
         data: Annotated[str, "Data as newline-separated key=value pairs (e.g. 'key1=value1\\nkey2=value2')"] = "",
         dry_run: Annotated[bool, "If true, simulate the operation without making changes"] = False,
-    ) -> str:
+        cluster: Annotated[str, "Target cluster name or alias (uses default if empty)"] = "",
+) -> str:
         """
         Create a ConfigMap with the specified key-value data.
         For large configs, consider using apply_manifest instead.
         """
         settings = get_settings()
-        manager = get_client_manager()
+        manager = resolve_manager(cluster)
         audit = get_audit_logger()
 
         if settings.is_protected_namespace(namespace):

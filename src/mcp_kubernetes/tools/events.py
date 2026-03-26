@@ -10,7 +10,8 @@ from typing import Annotated
 from kubernetes.client.rest import ApiException
 
 from ..audit import get_audit_logger
-from ..k8s_client import get_client_manager, handle_k8s_api_error
+from ..cluster_pool import resolve_manager
+from ..k8s_client import handle_k8s_api_error
 from ..models import EventInfo, JobInfo
 from ..utils import format_age, safe_get
 
@@ -26,12 +27,13 @@ def register_event_tools(mcp) -> None:
         warnings_only: Annotated[bool, "If true, show only Warning events (filters out Normal)"] = False,
         involved_object: Annotated[str, "Filter events for a specific resource name"] = "",
         limit: Annotated[int, "Maximum number of events to return (default 50, max 200)"] = 50,
-    ) -> str:
+        cluster: Annotated[str, "Target cluster name or alias (uses default if empty)"] = "",
+) -> str:
         """
         List Kubernetes events. Events are key signals for cluster health.
         Warning events indicate issues. Normal events show lifecycle activity.
         """
-        manager = get_client_manager()
+        manager = resolve_manager(cluster)
         audit = get_audit_logger()
 
         limit = min(max(1, limit), 200)
@@ -98,9 +100,10 @@ def register_event_tools(mcp) -> None:
     def list_jobs(
         namespace: Annotated[str, "Namespace to list jobs in. Use 'all' for all namespaces"] = "default",
         label_selector: Annotated[str, "Label selector filter"] = "",
-    ) -> str:
+        cluster: Annotated[str, "Target cluster name or alias (uses default if empty)"] = "",
+) -> str:
         """List Kubernetes Jobs showing completion status."""
-        manager = get_client_manager()
+        manager = resolve_manager(cluster)
         audit = get_audit_logger()
         try:
             batch = manager.batch_v1()
@@ -128,9 +131,10 @@ def register_event_tools(mcp) -> None:
     @mcp.tool
     def list_cronjobs(
         namespace: Annotated[str, "Namespace to list cronjobs in. Use 'all' for all namespaces"] = "default",
-    ) -> str:
+        cluster: Annotated[str, "Target cluster name or alias (uses default if empty)"] = "",
+) -> str:
         """List CronJobs showing their schedule and last run status."""
-        manager = get_client_manager()
+        manager = resolve_manager(cluster)
         audit = get_audit_logger()
         try:
             batch = manager.batch_v1()

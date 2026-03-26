@@ -10,7 +10,8 @@ from typing import Annotated
 from kubernetes.client.rest import ApiException
 
 from ..audit import get_audit_logger
-from ..k8s_client import get_client_manager, handle_k8s_api_error
+from ..cluster_pool import resolve_manager
+from ..k8s_client import handle_k8s_api_error
 from ..models import ServiceInfo, IngressInfo, IngressRule
 from ..utils import format_age, safe_get
 
@@ -24,11 +25,12 @@ def register_service_tools(mcp) -> None:
     def list_services(
         namespace: Annotated[str, "Namespace to list services in. Use 'all' for all namespaces"] = "default",
         label_selector: Annotated[str, "Label selector filter"] = "",
-    ) -> str:
+        cluster: Annotated[str, "Target cluster name or alias (uses default if empty)"] = "",
+) -> str:
         """
         List Kubernetes services with their type, cluster IP, external IPs, and ports.
         """
-        manager = get_client_manager()
+        manager = resolve_manager(cluster)
         audit = get_audit_logger()
         try:
             core = manager.core_v1()
@@ -57,9 +59,10 @@ def register_service_tools(mcp) -> None:
     def get_service(
         name: Annotated[str, "Name of the service"],
         namespace: Annotated[str, "Namespace of the service"] = "default",
-    ) -> str:
+        cluster: Annotated[str, "Target cluster name or alias (uses default if empty)"] = "",
+) -> str:
         """Get detailed information about a specific service."""
-        manager = get_client_manager()
+        manager = resolve_manager(cluster)
         audit = get_audit_logger()
         try:
             core = manager.core_v1()
@@ -95,11 +98,12 @@ def register_service_tools(mcp) -> None:
     @mcp.tool
     def list_ingresses(
         namespace: Annotated[str, "Namespace to list ingresses in. Use 'all' for all namespaces"] = "default",
-    ) -> str:
+        cluster: Annotated[str, "Target cluster name or alias (uses default if empty)"] = "",
+) -> str:
         """
         List Kubernetes Ingress resources showing hosts, paths, and TLS configuration.
         """
-        manager = get_client_manager()
+        manager = resolve_manager(cluster)
         audit = get_audit_logger()
         try:
             networking = manager.networking_v1()
