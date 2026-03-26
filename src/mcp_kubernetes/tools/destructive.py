@@ -109,15 +109,7 @@ def _run_safety_checks(
                     cluster=cluster,
                     requester_identity=identity,
                 )
-                return (
-                    f"__needs_approval__:{approval.approval_id}:"
-                    f"Approval required for {operation.value} on "
-                    f"{resource_kind}/{resource_name}"
-                    + (f" in '{namespace}'" if namespace else "")
-                    + f". Approval ID: {approval.approval_id}\n"
-                    f"An approval request has been sent to your configured channel.\n"
-                    f"Once approved, re-run this command with approval_id='{approval.approval_id}'."
-                )
+                return f"__needs_approval__:{approval.approval_id}:{approval.to_inline_prompt()}"
 
     return None  # All checks passed
 
